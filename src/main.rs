@@ -187,6 +187,8 @@ fn objdump_line_without_symbols(line: &str) -> Option<String> {
     Some(line)
 }
 
+// ====== Erratum decoding logic =======
+
 const ADRP_MARK: u32 = 0x9f00_0000;
 const ADRP_OPCODE: u32 = 0x9000_0000;
 // LDR (unsigned offset)
