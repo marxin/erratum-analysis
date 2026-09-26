@@ -207,7 +207,7 @@ enum ArmInsn {
     Branch,
     Ldr { rt: u32, rn: u32 },
     Add { rd: u32, rn: u32 },
-    LdrStr { rt: u32, rn: u32 },
+    LdrStr { rn: u32 },
     Unrecognized,
 }
 
@@ -279,7 +279,7 @@ impl ArmInsn {
             }
         } else if insn & LDR_STR_UNSIGNED_MASK == LDR_STR_UNSIGNED_OPCODE {
             Self::LdrStr {
-                rt: insn & REGISTER_MASK,
+                // rt is not used
                 rn: (insn >> 5) & REGISTER_MASK,
             }
         } else if Self::is_branch(insn) {
@@ -369,91 +369,5 @@ impl ArmInsn {
 
     fn classify_erratum_843419(insns: &[ArmInsn]) -> Option<ErratumVariant> {
         Self::classify_sequence1(insns).or_else(|| Self::classify_sequence2(insns))
-    }
-}
-
-fn is_adrp(instruction: u32) -> bool {
-    instruction & ADRP_MARK == ADRP_OPCODE
-}
-
-fn is_adrp_writing_register(instruction: u32, register: u32) -> bool {
-    is_adrp(instruction) && rd(instruction) == register
-}
-
-fn is_excluded_second_instruction(instruction: u32, adrp_register: u32) -> bool {
-    let uses_same_register = rd(instruction) == adrp_register && rn(instruction) == adrp_register;
-    if !uses_same_register {
-        return false;
-    }
-
-    // ADD Xd, Xn, ... (immediate, shifted-register, or extended-register form).
-    let is_add_x =
-        instruction & ADD_IMM_MASK == ADD_IMM_OPCODE || instruction & 0xff00_0000 == 0x8b00_0000;
-    // LDR Xt, [Xn, #imm] (unsigned-immediate form).
-    let is_ldr_x = instruction & LDR_UNSIGNED_MASK == LDR_UNSIGNED_OPCODE;
-
-    is_add_x || is_ldr_x
-}
-
-fn is_load_store_unsigned_immediate(instruction: u32) -> bool {
-    instruction & LDR_STR_UNSIGNED_MASK == LDR_STR_UNSIGNED_OPCODE
-}
-
-fn rd(instruction: u32) -> u32 {
-    instruction & 0x1f
-}
-
-fn rn(instruction: u32) -> u32 {
-    (instruction >> 5) & 0x1f
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn recognizes_instruction_classes() {
-        assert!(is_adrp(0x9000_0003));
-        assert!(!is_adrp(0x1000_0003)); // ADR, not ADRP
-
-        assert!(is_load_store_unsigned_immediate(0xf940_0060)); // LDR X0, [X3]
-        assert!(is_load_store_unsigned_immediate(0xb900_0060)); // STR W0, [X3]
-        assert!(!is_load_store_unsigned_immediate(0xf840_8460)); // post-indexed LDR
-    }
-
-    #[test]
-    fn extracts_registers() {
-        assert_eq!(rd(0x9000_0003), 3);
-        assert_eq!(rn(0xf940_0060), 3);
-    }
-
-    #[test]
-    fn strips_symbols_from_objdump_lines() {
-        assert_eq!(
-            objdump_line_without_symbols("0000000000001000 <function>:"),
-            None
-        );
-        assert_eq!(
-            objdump_line_without_symbols("    10184: 9000000a  adrp x10, 0x10000 <function+0x20>"),
-            Some("    10184: 9000000a  adrp x10, 0x10000".into())
-        );
-    }
-
-    #[test]
-    fn recognizes_adrp_that_redefines_the_original_register() {
-        assert!(is_adrp_writing_register(0x9000_0008, 8));
-        assert!(!is_adrp_writing_register(0x9000_0009, 8));
-        assert!(!is_adrp_writing_register(0x9100_2108, 8));
-    }
-
-    #[test]
-    fn excludes_second_instruction_that_redefines_the_adrp_register() {
-        assert!(is_excluded_second_instruction(0x9100_2108, 8)); // ADD X8, X8, #8
-        assert!(is_excluded_second_instruction(0x8b09_0108, 8)); // ADD X8, X8, X9
-        assert!(is_excluded_second_instruction(0xf940_0508, 8)); // LDR X8, [X8, #8]
-
-        assert!(!is_excluded_second_instruction(0x9100_2109, 8)); // ADD X9, X8, #8
-        assert!(!is_excluded_second_instruction(0xf940_0509, 8)); // LDR X9, [X8, #8]
-        assert!(!is_excluded_second_instruction(0xf900_0508, 8)); // STR X8, [X8, #8]
     }
 }
