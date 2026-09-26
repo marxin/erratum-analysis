@@ -116,6 +116,7 @@ fn inspect_file(
             };
             let instruction_count = variant.instruction_count();
             println!("===\nerratum 843419: {}", variant.name());
+            println!("{:?}", &decoded[start..start + instruction_count]);
 
             if let Err(error) = disassemble_snippet(
                 objdump,
@@ -203,6 +204,7 @@ const LDR_STR_UNSIGNED_OPCODE: u32 = 0x3900_0000;
 
 const REGISTER_MASK: u32 = (1 << 5) - 1;
 
+#[derive(Debug)]
 enum ArmInsn {
     Adrp { rd: u32 },
     BranchExceptSys,
