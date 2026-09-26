@@ -189,9 +189,6 @@ fn objdump_line_without_symbols(line: &str) -> Option<String> {
 
 const ADRP_MARK: u32 = 0x9f00_0000;
 const ADRP_OPCODE: u32 = 0x9000_0000;
-// Branches, Exception Generating and System instructions category (ARM Manual category of instructions)
-const BRANCH_EXCEPT_SYS_MASK: u32 = 0x1c00_0000;
-const BRANCH_EXCEPT_SYS_OPCODE: u32 = 0x1400_0000;
 // LDR (unsigned offset)
 const LDR_UNSIGNED_MASK: u32 = 0xffc0_0000;
 const LDR_UNSIGNED_OPCODE: u32 = 0xf940_0000;
@@ -207,7 +204,7 @@ const REGISTER_MASK: u32 = (1 << 5) - 1;
 #[derive(Debug)]
 enum ArmInsn {
     Adrp { rd: u32 },
-    BranchExceptSys,
+    Branch,
     Ldr { rt: u32, rn: u32 },
     Add { rd: u32, rn: u32 },
     LdrStr { rt: u32, rn: u32 },
@@ -251,13 +248,24 @@ impl ArmInsn {
         }
     }
 
+    fn is_branch(insn: u32) -> bool {
+        // B, BL
+        (insn & 0x7c000000) == 0x14000000
+           // B.cond and BC.cond
+           || (insn & 0xff000000) == 0x54000000
+           // CBZ, CBNZ
+           || (insn & 0x7e000000) == 0x34000000
+           // TBZ, TBNZ
+           || (insn & 0x7e000000) == 0x36000000
+           // BR, BLR, RET and authenticated/register control transfers
+           || (insn & 0xfe000000) == 0xd6000000
+    }
+
     fn from_opcode(insn: u32) -> Self {
         if insn & ADRP_MARK == ADRP_OPCODE {
             Self::Adrp {
                 rd: insn & REGISTER_MASK,
             }
-        } else if insn & BRANCH_EXCEPT_SYS_MASK == BRANCH_EXCEPT_SYS_OPCODE {
-            Self::BranchExceptSys
         } else if insn & LDR_UNSIGNED_MASK == LDR_UNSIGNED_OPCODE {
             Self::Ldr {
                 rt: insn & REGISTER_MASK,
@@ -273,6 +281,8 @@ impl ArmInsn {
                 rt: insn & REGISTER_MASK,
                 rn: (insn >> 5) & REGISTER_MASK,
             }
+        } else if Self::is_branch(insn) {
+            Self::Branch
         } else {
             Self::Unrecognized
         }
@@ -292,7 +302,7 @@ impl ArmInsn {
         // ...
         // This must not write to Rn.
         match insns[1] {
-            Self::Add { .. } | Self::Adrp { .. } | Self::BranchExceptSys => return None,
+            Self::Add { .. } | Self::Adrp { .. } | Self::Branch => return None,
             ArmInsn::Ldr { rt, .. } if rt == register => return None,
             _ => {}
         }
@@ -302,7 +312,7 @@ impl ArmInsn {
             // This cannot be a branch.
             // This cannot write Rn.
             match insns[2] {
-                Self::BranchExceptSys => {}
+                Self::Branch => {}
                 Self::Add { rd, .. } if rd == register => {}
                 Self::Ldr { rt, .. } if rt == register => {}
                 ArmInsn::Adrp { rd } if rd == register => {}
@@ -333,7 +343,7 @@ impl ArmInsn {
         // - This cannot be a branch or an ADRP.
         // - This cannot read Rn.
         match insns[1] {
-            Self::BranchExceptSys | Self::Adrp { .. } => return None,
+            Self::Branch | Self::Adrp { .. } => return None,
             Self::Add { rd, .. } if rd != register => return None,
             Self::Add { rn, .. } if rn == register => return None,
             Self::Ldr { rt, .. } if rt != register => return None,
@@ -345,7 +355,7 @@ impl ArmInsn {
         // This cannot be a branch.
         // This cannot write Rn.
         match insns[2] {
-            Self::BranchExceptSys => return None,
+            Self::Branch => return None,
             Self::Add { rd, .. } if rd == register => return None,
             Self::Adrp { rd, .. } if rd == register => return None,
             Self::Ldr { rt, .. } if rt == register => return None,
@@ -367,10 +377,6 @@ fn is_adrp(instruction: u32) -> bool {
 
 fn is_adrp_writing_register(instruction: u32, register: u32) -> bool {
     is_adrp(instruction) && rd(instruction) == register
-}
-
-fn is_branch_exception_or_system(instruction: u32) -> bool {
-    instruction & BRANCH_EXCEPT_SYS_MASK == BRANCH_EXCEPT_SYS_OPCODE
 }
 
 fn is_excluded_second_instruction(instruction: u32, adrp_register: u32) -> bool {
@@ -408,10 +414,6 @@ mod tests {
     fn recognizes_instruction_classes() {
         assert!(is_adrp(0x9000_0003));
         assert!(!is_adrp(0x1000_0003)); // ADR, not ADRP
-
-        assert!(is_branch_exception_or_system(0x1400_0000)); // B
-        assert!(is_branch_exception_or_system(0xd400_0001)); // SVC
-        assert!(!is_branch_exception_or_system(0xd100_0400)); // SUB
 
         assert!(is_load_store_unsigned_immediate(0xf940_0060)); // LDR X0, [X3]
         assert!(is_load_store_unsigned_immediate(0xb900_0060)); // STR W0, [X3]
