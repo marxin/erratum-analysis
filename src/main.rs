@@ -243,6 +243,14 @@ impl ErratumVariant {
 }
 
 impl ArmInsn {
+    fn is_final_load_store_imm(insn: &ArmInsn, register: u32) -> bool {
+        match insn {
+            Self::LdrStr { rn, .. } if *rn == register => true,
+            Self::Ldr { rn, .. } if *rn == register => true,
+            _ => false,
+        }
+    }
+
     fn from_opcode(insn: u32) -> Self {
         if insn & ADRP_MARK == ADRP_OPCODE {
             Self::Adrp {
@@ -302,17 +310,13 @@ impl ArmInsn {
             }
 
             // 4) Load/store register (unsigned immediate)" encoding class, using Rn as the base address register.
-            if let Self::LdrStr { rn, .. } = insns[3]
-                && rn == register
-            {
+            if Self::is_final_load_store_imm(&insns[3], register) {
                 return Some(ErratumVariant::Sequence1A);
             }
         }
 
         // 3) Variant B
-        if let Self::LdrStr { rn, .. } = insns[2]
-            && rn == register
-        {
+        if Self::is_final_load_store_imm(&insns[2], register) {
             Some(ErratumVariant::Sequence1B)
         } else {
             None
@@ -353,9 +357,8 @@ impl ArmInsn {
         }
 
         // 4) Load/store register (unsigned immediate)" encoding class, using Rn as the base address register.
-        if let Self::LdrStr { rn, .. } = insns[3]
-            && rn == register
-        {
+
+        if Self::is_final_load_store_imm(&insns[3], register) {
             Some(ErratumVariant::Sequence2)
         } else {
             None
