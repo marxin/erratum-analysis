@@ -1,4 +1,3 @@
-use object::Architecture::Arm;
 use object::{Object, ObjectSection};
 use std::env;
 use std::error::Error;
@@ -22,13 +21,7 @@ fn main() {
     }
 }
 
-use disarm64::{InsnOpcode, decoder};
-
 fn run() -> Result<(), Box<dyn Error>> {
-    // let insn = decoder::decode(0x9100052a).unwrap().definition();
-    // dbg!(insn);
-    // todo!();
-
     let root = env::args_os()
         .nth(1)
         .map(PathBuf::from)
@@ -110,44 +103,30 @@ fn inspect_file(
             })
             .collect();
 
-        for start in 0..instructions.len() {
-            if !is_adrp(instructions[start]) {
+        let decoded: Vec<ArmInsn> = instructions
+            .iter()
+            .copied()
+            .map(ArmInsn::from_opcode)
+            .collect();
+
+        for start in 0..decoded.len() {
+            let end = (start + ErratumVariant::MAX_INSTRUCTION_COUNT).min(decoded.len());
+            let Some(variant) = ArmInsn::classify_erratum_843419(&decoded[start..end]) else {
                 continue;
-            }
+            };
+            let instruction_count = variant.instruction_count();
+            println!("===\nerratum 843419: {}", variant.name());
 
-            let adrp_register = rd(instructions[start]);
-            if start + 1 >= instructions.len()
-                || is_excluded_second_instruction(instructions[start + 1], adrp_register)
-            {
-                continue;
+            if let Err(error) = disassemble_snippet(
+                objdump,
+                path,
+                section.address() + (start * 4) as u64,
+                section.address() + ((start + instruction_count) * 4) as u64,
+            ) {
+                eprintln!("warning: could not disassemble snippet: {error}");
             }
-
-            // There must be one non-branch instruction between ADRP and the
-            // load/store, and there may be a second one.
-            for load_index in [start + 2, start + 3] {
-                if load_index >= instructions.len()
-                    || instructions[start + 1..load_index]
-                        .iter()
-                        .any(|instruction| is_branch_exception_or_system(*instruction))
-                    || (load_index == start + 3
-                        && is_adrp_writing_register(instructions[start + 2], adrp_register))
-                    || !is_load_store_unsigned_immediate(instructions[load_index])
-                    || rd(instructions[start]) != rn(instructions[load_index])
-                {
-                    continue;
-                }
-
-                if let Err(error) = disassemble_snippet(
-                    objdump,
-                    path,
-                    section.address() + (start * 4) as u64,
-                    section.address() + ((load_index + 1) * 4) as u64,
-                ) {
-                    eprintln!("warning: could not disassemble snippet: {error}");
-                }
-                stats.match_count += 1;
-                stats.snippet_bytes += ((load_index - start + 1) * 4) as u64;
-            }
+            stats.match_count += 1;
+            stats.snippet_bytes += (instruction_count * 4) as u64;
         }
     }
 
@@ -242,6 +221,25 @@ enum ErratumVariant {
     Sequence2,
 }
 
+impl ErratumVariant {
+    const MAX_INSTRUCTION_COUNT: usize = 4;
+
+    fn instruction_count(&self) -> usize {
+        match self {
+            Self::Sequence1A | Self::Sequence2 => 4,
+            Self::Sequence1B => 3,
+        }
+    }
+
+    fn name(&self) -> &'static str {
+        match self {
+            Self::Sequence1A => "sequence 1A",
+            Self::Sequence1B => "sequence 1B",
+            Self::Sequence2 => "sequence 2",
+        }
+    }
+}
+
 impl ArmInsn {
     fn from_opcode(insn: u32) -> Self {
         if insn & ADRP_MARK == ADRP_OPCODE {
@@ -296,7 +294,8 @@ impl ArmInsn {
             match insns[2] {
                 Self::BranchExceptSys => return None,
                 Self::Add { rd, .. } if rd == register => return None,
-                Self::Ldr { rn, .. } if rn == register => return None,
+                Self::Ldr { rt, .. } if rt == register => return None,
+                ArmInsn::Adrp { rd } if rd == register => return None,
                 _ => {}
             }
 
@@ -309,7 +308,7 @@ impl ArmInsn {
         }
 
         // 3) Variant B
-        if let Self::LdrStr { rn, .. } = insns[3]
+        if let Self::LdrStr { rn, .. } = insns[2]
             && rn == register
         {
             Some(ErratumVariant::Sequence1B)
@@ -335,6 +334,8 @@ impl ArmInsn {
             Self::BranchExceptSys | Self::Adrp { .. } => return None,
             Self::Add { rd, .. } if rd != register => return None,
             Self::Add { rn, .. } if rn == register => return None,
+            Self::Ldr { rt, .. } if rt != register => return None,
+            Self::Ldr { rn, .. } if rn == register => return None,
             _ => {}
         }
 
@@ -345,7 +346,7 @@ impl ArmInsn {
             Self::BranchExceptSys => return None,
             Self::Add { rd, .. } if rd == register => return None,
             Self::Adrp { rd, .. } if rd == register => return None,
-            Self::Ldr { rn, .. } if rn == register => return None,
+            Self::Ldr { rt, .. } if rt == register => return None,
             _ => {}
         }
 
@@ -360,7 +361,7 @@ impl ArmInsn {
     }
 
     fn classify_erratum_843419(insns: &[ArmInsn]) -> Option<ErratumVariant> {
-        Self::classify_sequence1(insns).or_else(|| Self::classify_sequence2(insns))
+        Self::classify_sequence2(insns).or_else(|| Self::classify_sequence1(insns))
     }
 }
 
@@ -383,7 +384,8 @@ fn is_excluded_second_instruction(instruction: u32, adrp_register: u32) -> bool 
     }
 
     // ADD Xd, Xn, ... (immediate, shifted-register, or extended-register form).
-    let is_add_x = instruction & ADD_IMM_MASK == ADD_IMM_OPCODE; //;|| instruction & 0xff00_0000 == 0x8b00_0000;
+    let is_add_x =
+        instruction & ADD_IMM_MASK == ADD_IMM_OPCODE || instruction & 0xff00_0000 == 0x8b00_0000;
     // LDR Xt, [Xn, #imm] (unsigned-immediate form).
     let is_ldr_x = instruction & LDR_UNSIGNED_MASK == LDR_UNSIGNED_OPCODE;
 
