@@ -215,9 +215,9 @@ enum ArmInsn {
 }
 
 enum ErratumVariant {
-    // Sequence 1 with 3 instructions
-    Sequence1A,
     // Sequence 1 with 4 instructions
+    Sequence1A,
+    // Sequence 1 with 3 instructions
     Sequence1B,
     // Sequence 2
     Sequence2,
@@ -302,25 +302,21 @@ impl ArmInsn {
             // This cannot be a branch.
             // This cannot write Rn.
             match insns[2] {
-                Self::BranchExceptSys => return None,
-                Self::Add { rd, .. } if rd == register => return None,
-                Self::Ldr { rt, .. } if rt == register => return None,
-                ArmInsn::Adrp { rd } if rd == register => return None,
-                _ => {}
-            }
-
-            // 4) Load/store register (unsigned immediate)" encoding class, using Rn as the base address register.
-            if Self::is_final_load_store_imm(&insns[3], register) {
-                return Some(ErratumVariant::Sequence1A);
+                Self::BranchExceptSys => {}
+                Self::Add { rd, .. } if rd == register => {}
+                Self::Ldr { rt, .. } if rt == register => {}
+                ArmInsn::Adrp { rd } if rd == register => {}
+                _ => {
+                    // 4) Load/store register (unsigned immediate)" encoding class, using Rn as the base address register.
+                    if Self::is_final_load_store_imm(&insns[3], register) {
+                        return Some(ErratumVariant::Sequence1A);
+                    }
+                }
             }
         }
 
         // 3) Variant B
-        if Self::is_final_load_store_imm(&insns[2], register) {
-            Some(ErratumVariant::Sequence1B)
-        } else {
-            None
-        }
+        Self::is_final_load_store_imm(&insns[2], register).then_some(ErratumVariant::Sequence1B)
     }
 
     fn classify_sequence2(insns: &[ArmInsn]) -> Option<ErratumVariant> {
@@ -357,12 +353,7 @@ impl ArmInsn {
         }
 
         // 4) Load/store register (unsigned immediate)" encoding class, using Rn as the base address register.
-
-        if Self::is_final_load_store_imm(&insns[3], register) {
-            Some(ErratumVariant::Sequence2)
-        } else {
-            None
-        }
+        Self::is_final_load_store_imm(&insns[3], register).then_some(ErratumVariant::Sequence2)
     }
 
     fn classify_erratum_843419(insns: &[ArmInsn]) -> Option<ErratumVariant> {
