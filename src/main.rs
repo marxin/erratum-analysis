@@ -285,7 +285,7 @@ impl ArmInsn {
         // This must not write to Rn.
         match insns[1] {
             Self::Add { .. } | Self::Adrp { .. } | Self::BranchExceptSys => return None,
-            ArmInsn::Ldr { rn, .. } if rn == register => return None,
+            ArmInsn::Ldr { rt, .. } if rt == register => return None,
             _ => {}
         }
 
@@ -320,7 +320,7 @@ impl ArmInsn {
     }
 
     fn classify_sequence2(insns: &[ArmInsn]) -> Option<ErratumVariant> {
-        if insns.len() < 3 {
+        if insns.len() < 4 {
             return None;
         }
 
