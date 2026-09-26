@@ -1,3 +1,4 @@
+use object::Architecture::Arm;
 use object::{Object, ObjectSection};
 use std::env;
 use std::error::Error;
@@ -221,16 +222,146 @@ const ADD_IMM_OPCODE: u32 = 0x9100_0000;
 const LDR_STR_UNSIGNED_MASK: u32 = 0x3b00_0000;
 const LDR_STR_UNSIGNED_OPCODE: u32 = 0x3900_0000;
 
+const REGISTER_MASK: u32 = (1 << 5) - 1;
+
 enum ArmInsn {
-    Adrp { rn: u32 },
+    Adrp { rd: u32 },
     BranchExceptSys,
     Ldr { rt: u32, rn: u32 },
     Add { rd: u32, rn: u32 },
     LdrStr { rt: u32, rn: u32 },
+    Unrecognized,
+}
+
+enum ErratumVariant {
+    // Sequence 1 with 3 instructions
+    Sequence1A,
+    // Sequence 1 with 4 instructions
+    Sequence1B,
+    // Sequence 2
+    Sequence2,
 }
 
 impl ArmInsn {
-    fn try_parse(insn: u32) -> Option<Self> {}
+    fn from_opcode(insn: u32) -> Self {
+        if insn & ADRP_MARK == ADRP_OPCODE {
+            Self::Adrp {
+                rd: insn & REGISTER_MASK,
+            }
+        } else if insn & BRANCH_EXCEPT_SYS_MASK == BRANCH_EXCEPT_SYS_OPCODE {
+            Self::BranchExceptSys
+        } else if insn & LDR_UNSIGNED_MASK == LDR_UNSIGNED_OPCODE {
+            Self::Ldr {
+                rt: insn & REGISTER_MASK,
+                rn: (insn >> 5) & REGISTER_MASK,
+            }
+        } else if insn & ADD_IMM_MASK == ADD_IMM_OPCODE {
+            Self::Add {
+                rd: insn & REGISTER_MASK,
+                rn: (insn >> 5) & REGISTER_MASK,
+            }
+        } else if insn & LDR_STR_UNSIGNED_MASK == LDR_STR_UNSIGNED_OPCODE {
+            Self::LdrStr {
+                rt: insn & REGISTER_MASK,
+                rn: (insn >> 5) & REGISTER_MASK,
+            }
+        } else {
+            Self::Unrecognized
+        }
+    }
+
+    fn classify_sequence1(insns: &[ArmInsn]) -> Option<ErratumVariant> {
+        if insns.len() < 3 {
+            return None;
+        }
+
+        // 1) ADRP
+        let ArmInsn::Adrp { rd: register } = insns[0] else {
+            return None;
+        };
+
+        // 2) A load or store instruction:
+        // ...
+        // This must not write to Rn.
+        match insns[1] {
+            Self::Add { .. } | Self::Adrp { .. } | Self::BranchExceptSys => return None,
+            ArmInsn::Ldr { rn, .. } if rn == register => return None,
+            _ => {}
+        }
+
+        // 3) Variant A (optional 3rd instruction)
+        if insns.len() >= 4 {
+            // This cannot be a branch.
+            // This cannot write Rn.
+            match insns[2] {
+                Self::BranchExceptSys => return None,
+                Self::Add { rd, .. } if rd == register => return None,
+                Self::Ldr { rn, .. } if rn == register => return None,
+                _ => {}
+            }
+
+            // 4) Load/store register (unsigned immediate)" encoding class, using Rn as the base address register.
+            if let Self::LdrStr { rn, .. } = insns[3]
+                && rn == register
+            {
+                return Some(ErratumVariant::Sequence1A);
+            }
+        }
+
+        // 3) Variant B
+        if let Self::LdrStr { rn, .. } = insns[3]
+            && rn == register
+        {
+            Some(ErratumVariant::Sequence1B)
+        } else {
+            None
+        }
+    }
+
+    fn classify_sequence2(insns: &[ArmInsn]) -> Option<ErratumVariant> {
+        if insns.len() < 3 {
+            return None;
+        }
+
+        // 1) ADRP
+        let ArmInsn::Adrp { rd: register } = insns[0] else {
+            return None;
+        };
+
+        // 2) Another instruction which writes to Rn.
+        // - This cannot be a branch or an ADRP.
+        // - This cannot read Rn.
+        match insns[1] {
+            Self::BranchExceptSys | Self::Adrp { .. } => return None,
+            Self::Add { rd, .. } if rd != register => return None,
+            Self::Add { rn, .. } if rn == register => return None,
+            _ => {}
+        }
+
+        // 3) Another instruction.
+        // This cannot be a branch.
+        // This cannot write Rn.
+        match insns[2] {
+            Self::BranchExceptSys => return None,
+            Self::Add { rd, .. } if rd == register => return None,
+            Self::Adrp { rd, .. } if rd == register => return None,
+            Self::Ldr { rn, .. } if rn == register => return None,
+            _ => {}
+        }
+
+        // 4) Load/store register (unsigned immediate)" encoding class, using Rn as the base address register.
+        if let Self::LdrStr { rn, .. } = insns[3]
+            && rn == register
+        {
+            Some(ErratumVariant::Sequence2)
+        } else {
+            None
+        }
+    }
+
+    fn classify_erratum_843419(insns: &[ArmInsn]) -> Option<ErratumVariant> {
+        Self::classify_sequence1(insns).or_else(|| Self::classify_sequence2(insns))
+    }
 }
 
 fn is_adrp(instruction: u32) -> bool {
