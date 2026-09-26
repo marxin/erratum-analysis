@@ -267,6 +267,7 @@ impl ArmInsn {
                 rd: insn & REGISTER_MASK,
             }
         } else if insn & LDR_UNSIGNED_MASK == LDR_UNSIGNED_OPCODE {
+            // Note Ldr is a actually a part of LdrStr, parse it earlier.
             Self::Ldr {
                 rt: insn & REGISTER_MASK,
                 rn: (insn >> 5) & REGISTER_MASK,
