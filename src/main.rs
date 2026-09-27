@@ -122,6 +122,7 @@ fn inspect_file(
             if let Err(error) = disassemble_snippet(
                 objdump,
                 path,
+                section_name,
                 section.address() + (start * 4) as u64,
                 section.address() + ((start + instruction_count) * 4) as u64,
             ) {
@@ -138,12 +139,13 @@ fn inspect_file(
 fn disassemble_snippet(
     objdump: &std::ffi::OsStr,
     path: &Path,
+    section_name: &str,
     start_address: u64,
     stop_address: u64,
 ) -> Result<(), Box<dyn Error>> {
     let output = Command::new(objdump)
         .arg("--disassemble")
-        .arg("--section=__text")
+        .arg(format!("--section={section_name}"))
         .arg(format!("--start-address=0x{start_address:x}"))
         .arg(format!("--stop-address=0x{stop_address:x}"))
         .arg(path)
