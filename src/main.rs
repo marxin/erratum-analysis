@@ -50,9 +50,9 @@ fn run() -> Result<(), Box<dyn Error>> {
         stats.snippet_bytes as f64 / stats.object_bytes as f64
     };
     eprintln!(
-        "scanned {} object files ({} bytes); found {} affected snippets ({} bytes, {:.8}% of object bytes)",
+        "\nScanned {} object files ({} MiB); found {} affected snippets ({} bytes, {:.8}% of object bytes)",
         object_files.len(),
-        stats.object_bytes,
+        stats.object_bytes as f32 / (1024.0 * 1024.0),
         stats.match_count,
         stats.snippet_bytes,
         affected_fraction * 100.0
