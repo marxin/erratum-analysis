@@ -86,7 +86,8 @@ fn inspect_file(
     let little_endian = file.is_little_endian();
 
     for section in file.sections() {
-        if section.name()? != "__text" || section.segment_name()? != Some("__TEXT") {
+        let section_name = section.name()?;
+        if section_name != "__text" && section_name != ".text" {
             continue;
         }
 
