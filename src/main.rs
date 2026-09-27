@@ -145,6 +145,7 @@ fn disassemble_snippet(
 ) -> Result<(), Box<dyn Error>> {
     let output = Command::new(objdump)
         .arg("--disassemble")
+        .arg("-r")
         .arg(format!("--section={section_name}"))
         .arg(format!("--start-address=0x{start_address:x}"))
         .arg(format!("--stop-address=0x{stop_address:x}"))
