@@ -374,6 +374,7 @@ impl ArmInsn {
     }
 
     fn classify_erratum_843419(insns: &[ArmInsn]) -> Option<ErratumVariant> {
-        Self::classify_sequence1(insns).or_else(|| Self::classify_sequence2(insns))
+        // Let's ignore Sequence2 now!
+        Self::classify_sequence1(insns)
     }
 }
