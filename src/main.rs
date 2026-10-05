@@ -87,7 +87,7 @@ fn inspect_file(
 
     for section in file.sections() {
         let section_name = section.name()?;
-        if section_name != "__text" && section_name != ".text" {
+        if section_name != "__text" && !section_name.starts_with(".text") {
             continue;
         }
 
